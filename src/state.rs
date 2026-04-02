@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{info, debug};
 
-/// Persisted to ~/.config/patchwork/state.json
+/// Persisted to ~/.config/patchwire/state.json
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct State {
     /// Per sink-name: is linking enabled?
@@ -11,7 +11,7 @@ pub struct State {
 }
 
 impl State {
-    /// Load from ~/.config/patchwork/state.json
+    /// Load from ~/.config/patchwire/state.json
     /// Returns empty state if the file doesen't exist yet
     pub fn load() -> anyhow::Result<Self> {
         let path = state_path();
@@ -26,7 +26,7 @@ impl State {
         Ok(state)
     }
 
-    /// Persist to ~/.config/patchwork/state.json atomically
+    /// Persist to ~/.config/patchwire/state.json atomically
     /// Creates the config directory if it doesen't exist
     pub fn save(&self) -> anyhow::Result<()> {
         let dir = crate::config::Config::config_dir();

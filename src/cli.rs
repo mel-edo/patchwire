@@ -1,8 +1,8 @@
 use clap::{Parser, Subcommand};
 
-/// Patchwork - Pipewire audio output router
+/// Patchwire - Pipewire audio output router
 #[derive(Parser, Debug)]
-#[command(name = "patchwork", version, about, long_about = None)]
+#[command(name = "patchwire", version, about, long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -18,7 +18,7 @@ pub enum Command {
 
     /// Toggle linking for a specific sink
     Toggle {
-        /// Sink name (as shown by 'patchwork list')
+        /// Sink name (as shown by 'patchwire list')
         sink: String,
     },
 

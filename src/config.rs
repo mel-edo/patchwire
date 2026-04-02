@@ -28,7 +28,7 @@ pub struct Profile {
 }
 
 impl Config {
-    /// Load from ~/.config/patchwork/config.toml
+    /// Load from ~/.config/patchwire/config.toml
     /// Returns default config if the file doesen't exist yet
     pub fn load() -> anyhow::Result<Self> {
         let path = config_path();
@@ -47,7 +47,7 @@ impl Config {
     pub fn config_dir() -> std::path::PathBuf {
         dirs::config_dir()
             .expect("could not find config directory")
-            .join("patchwork")
+            .join("patchwire")
     }
 }
 
