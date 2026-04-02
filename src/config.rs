@@ -28,10 +28,18 @@ pub struct Profile {
 }
 
 impl Config {
+    /// Returns the full path to config.toml (~/.config/patchwire/config.toml)
+    pub fn config_path() -> std::path::PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
+            .join("patchwire")
+            .join("config.toml")
+    }
+
     /// Load from ~/.config/patchwire/config.toml
     /// Returns default config if the file doesen't exist yet
     pub fn load() -> anyhow::Result<Self> {
-        let path = config_path();
+        let path = Self::config_path();
 
         if !path.exists() {
             info!("no config file found at {}, using defaults", path.display());
@@ -44,13 +52,16 @@ impl Config {
         Ok(config)
     }
 
-    pub fn config_dir() -> std::path::PathBuf {
-        dirs::config_dir()
-            .expect("could not find config directory")
-            .join("patchwire")
-    }
-}
+    pub fn save(&self) -> anyhow::Result<()> {
+        let path = Self::config_path();
 
-fn config_path() -> std::path::PathBuf {
-    Config::config_dir().join("config.toml")
+        // Ensure the directory exists before writing the file
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let toml_string = toml::to_string_pretty(self)?;
+        std::fs::write(path, toml_string)?;
+        Ok(())
+    }
 }

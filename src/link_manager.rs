@@ -1,20 +1,18 @@
 use pipewire::{core::Core, properties::properties};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::graph::{Graph, PortDirection};
+use crate::graph::Graph;
 
 /// Attempt to link the monitor ports of 'default_sink' to the playback ports of 'target_sink'.
-/// 
 /// Port pairs: monitor_FL -> playback_FL, monitor_FR -> playback_FR
-/// 
-/// Returns Ok(()) if both links were created, or an error describing why resolution or creation failed.
+/// Returns a vec of created pipewire links. When these objects are dropped, the links are automatically destroyed in pipewire.
 
 pub fn create_links(
     core: &Core,
     graph: &Graph,
     default_sink_name: &str,
     target_sink_name: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<pipewire::link::Link>> {
     let default_node = graph
         .node_by_name(default_sink_name)
         .ok_or_else(|| anyhow::anyhow!("default sink not found in graph: {default_sink_name}"))?;
@@ -28,6 +26,8 @@ pub fn create_links(
         ("monitor_FL", "playback_FL"),
         ("monitor_FR", "playback_FR"),
     ];
+
+    let mut created_links = Vec::new();
 
     for (src_port_name, dst_port_name) in port_pairs {
         let src_port = graph
@@ -59,28 +59,14 @@ pub fn create_links(
             "link.input.port" => dst_port.id.to_string(),
             "link.output.node" => default_node.id.to_string(),
             "link.input.node" => target_node.id.to_string(),
-            "object.linger" => "1",
         };
 
-        core.create_object::<pipewire::link::Link>("link-factory", &props)
+        let link = core.create_object::<pipewire::link::Link>("link-factory", &props)
             .map_err(|e| anyhow::anyhow!("failed to create link: {e}"))?;
 
+        created_links.push(link);
         debug!(src = src_port_name, dst = dst_port_name, "link created");
     }
 
-    Ok(())
-}
-
-/// Destroy all active links whose output node is 'default_sink_name' and input node is 'target_sink_name'.
-
-pub fn destroy_links(
-    _graph: &Graph,
-    default_sink_name: &str,
-    target_sink_name: &str,
-) {
-    warn!(
-        default = default_sink_name,
-        target = target_sink_name,
-        "destroy_links called - todo!"
-    );
+    Ok(created_links)
 }

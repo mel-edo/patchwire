@@ -29,10 +29,13 @@ impl State {
     /// Persist to ~/.config/patchwire/state.json atomically
     /// Creates the config directory if it doesen't exist
     pub fn save(&self) -> anyhow::Result<()> {
-        let dir = crate::config::Config::config_dir();
-        std::fs::create_dir_all(&dir)?;
-
         let path = state_path();
+
+        // Ensure the directory exists before writing
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         let text = serde_json::to_string_pretty(self)?;
 
         // write to a temp file then rename - avoids a corrupt state.json
@@ -57,5 +60,8 @@ impl State {
 }
 
 fn state_path() -> std::path::PathBuf {
-    crate::config::Config::config_dir().join("state.json")
+    crate::config::Config::config_path()
+        .parent()
+        .expect("config path should have a parent directory")
+        .join("state.json")
 }

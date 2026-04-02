@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc, collections::HashMap};
+
 use pipewire::{
     context::ContextRc,
     main_loop::MainLoopRc,
@@ -6,37 +8,30 @@ use pipewire::{
     types::ObjectType
 };
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
-use std::{cell::RefCell, rc::Rc};
+use tracing::{debug, info, warn, error};
 
 use crate::{
-    graph::{Graph, NodeInfo, PortDirection, PortInfo},
+    graph::{NodeInfo, PortDirection, PortInfo},
     messages::{PwCommand, PwEvent},
 };
 
 pub fn run(
-    cmd_rx: std::sync::mpsc::Receiver<PwCommand>,
+    cmd_rx: pipewire::channel::Receiver<PwCommand>,
     event_tx: mpsc::UnboundedSender<PwEvent>,
+    graph: std::sync::Arc<std::sync::Mutex<crate::graph::Graph>>,
 ) -> anyhow::Result<()> {
-
-    pipewire::init();
     // The mainloop owns the PW event loop. Everything pipewire lives here
     let mainloop = MainLoopRc::new(None)?;
     let context = ContextRc::new(&mainloop, None)?;
     let core = context.connect_rc(None)?;
     let registry = core.get_registry_rc()?;
-
     let registry_for_meta = core.get_registry_rc()?;
-
-    // Graph lives on PW thread
-    let graph = Rc::new(RefCell::new(Graph::new()));
-
+    
     // std::sync::mpsc for cmd_rx as it needs to be polled from a non async context (pw main loop iteration callback)
     // event_tx is tokio unbounded because the tokio side consumes it async
-
-    let graph_for_global = Rc::clone(&graph);
-    let graph_for_remove = Rc::clone(&graph);
     let event_tx_for_global = event_tx.clone();
+    let default_sink_name = Rc::new(RefCell::new(None::<String>));
+    let default_sink_name_for_registry = Rc::clone(&default_sink_name);
 
     // listener must stay alive - dropping it unregisters the callbacks
     let _listener = registry
@@ -57,16 +52,18 @@ pub fn run(
 
                     info!(id = global.id, %name, %media_class, "node added");
 
-                    graph_for_global.borrow_mut().add_node(NodeInfo {
+                    let node = NodeInfo {
                         id: global.id,
                         name: name.clone(),
                         description: description.clone(),
                         media_class: media_class.clone(),
-                    });
+                    };
+
+                    event_tx_for_global.send(PwEvent::NodeAdded(node)).ok();
 
                     // Only emit SinkAdded for actual audio sinks
                     if media_class == "Audio/Sink" {
-                        let _ = event_tx_for_global.send(PwEvent::SinkAdded { name, description });
+                        event_tx_for_global.send(PwEvent::SinkAdded { name, description }).ok();
                     }
                 }
 
@@ -84,12 +81,12 @@ pub fn run(
 
                     debug!(id = global.id, %port_name, node_id, "port added");
 
-                    graph_for_global.borrow_mut().add_port(PortInfo {
+                    event_tx_for_global.send(PwEvent::PortAdded(PortInfo {
                         id: global.id,
                         node_id,
                         name: port_name,
                         direction,
-                    });
+                    })).ok();
                 }
 
                 ObjectType::Metadata => {
@@ -102,6 +99,7 @@ pub fn run(
                     info!(id = global.id, "found default metadata object");
 
                     let event_tx_meta = event_tx_for_global.clone();
+                    let default_sink_name_for_meta = Rc::clone(&default_sink_name_for_registry);
 
                     let metadata: Metadata = registry_for_meta
                         .bind(global)
@@ -117,9 +115,9 @@ pub fn run(
                                     // value is a JSON string: {"name":"alsa_output..."}
                                     // parse out the name field simply
                                     if let Some(name) = parse_default_sink_name(val) {
+                                        *default_sink_name_for_meta.borrow_mut() = Some(name.clone());
                                         info!(%name, "default sink changed");
-                                        let _ = event_tx_meta
-                                            .send(PwEvent::DefaultChanged { name });
+                                        event_tx_meta.send(PwEvent::DefaultChanged { name }).ok();
                                     }
                                 }
                             }
@@ -140,19 +138,51 @@ pub fn run(
         })
         .global_remove(move |id| {
             debug!(id, "object removed");
-            let mut g = graph_for_remove.borrow_mut();
-
-            // emit SinkRemoved if this id was and Audio/Sink node
-            if let Some(node) = g.nodes.get(&id) {
-                if node.media_class == "Audio/Sink" {
-                    let _ = event_tx.send(PwEvent::SinkRemoved { name: node.name.clone() });
-                }
-            }
-
-            g.remove_node(id);
-            g.remove_port(id);
+            event_tx.send(PwEvent::NodeRemoved(id)).ok();
+            event_tx.send(PwEvent::PortRemoved(id)).ok();
         })
         .register();
+
+    let core_for_cmd = core.clone();
+    let default_sink_name_for_cmd = Rc::clone(&default_sink_name);
+    let mainloop_for_cmd = mainloop.clone();
+
+    // map to hold active links, key = target sink name
+    let active_links = Rc::new(RefCell::new(HashMap::<String, Vec<pipewire::link::Link>>::new()));
+    let active_links_for_cmd = Rc::clone(&active_links);
+
+    // wakes up pipewire loop whenever tokio sends a command
+    let _receiver = cmd_rx.attach(mainloop.loop_(), move |cmd| {
+        match cmd {
+            PwCommand::LinkSink { name } => {
+                let default_name = default_sink_name_for_cmd.borrow().clone();
+                if let Some(def_name) = default_name {
+                    let g = graph.lock().unwrap();
+                    
+                    match crate::link_manager::create_links(&core_for_cmd, &g, &def_name, &name) {
+                        Ok(links) => {
+                            active_links_for_cmd.borrow_mut().insert(name.clone(), links);
+                            info!("Successfully linked and stored: {name}");
+                        }
+                        Err(e) => error!("Failed to create links: {e:#}"),
+                    }
+                } else {
+                    warn!("Cannot link '{name}', no default sink known yet");
+                }
+            }
+            PwCommand::UnlinkSink { name } => {
+                if active_links_for_cmd.borrow_mut().remove(&name).is_some() {
+                    info!("Destroyed links for {name}");
+                }
+            }
+            PwCommand::Quit => {
+                mainloop_for_cmd.quit();
+            }
+        }
+    });
+
+    // We must leak the receiver so it isn't dropped at the end of this scope keeping the callback alive for the duration of the machine
+    std::mem::forget(_receiver);
 
     info!("Pipewire registry listener ready - running main loop");
 
