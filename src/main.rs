@@ -1,22 +1,27 @@
 mod cli;
+mod cli_client;
 mod graph;
 mod link_manager;
 mod messages;
 mod pw_thread;
 mod config;
 mod state;
+mod dbus_server;
+
+use std::sync::{Arc, Mutex};
 
 use clap::Parser;
-use tracing::{info, error, warn};
+use tracing::{info, error};
 
 fn main() -> anyhow::Result<()> {
+    pipewire::init();
     // Initialise structured logging.
     // RUST_LOG=debug - verbose, info - normal
 
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "patchwork=info".into()),
+                .unwrap_or_else(|_| "patchwire=info".into()),
         )
         .init();
 
@@ -24,24 +29,33 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         cli::Command::Daemon => {
-            info!("patchwork daemon starting");
+            info!("patchwire daemon starting");
             run_daemon()?;
         }
 
         cli::Command::List => {
-            todo!("patchwork list - D-Bus client");
+            run_async(cli_client::cmd_list())?;
         }
 
         cli::Command::Toggle { sink } => {
-            todo!("patchwork toggle {sink} - D-Bus client");
+            run_async(cli_client::cmd_toggle(&sink))?;
         }
 
         cli::Command::Profile { name } => {
-            todo!("patchwork profile {name} - D-Bus client");
+            run_async(cli_client::cmd_profile(&name))?;
         }
     }
 
     Ok(())
+}
+
+/// Run a single async future to completion on a throwaway tokio runtime
+/// Used by CLI subcommands which are short lived - connect, call, print, exit
+fn run_async<F>(fut: F) -> anyhow::Result<()>
+where
+    F: std::future::Future<Output = anyhow::Result<()>>,
+{
+    tokio::runtime::Runtime::new()?.block_on(fut)
 }
 
 fn run_daemon() -> anyhow::Result<()> {
@@ -58,16 +72,22 @@ fn run_daemon() -> anyhow::Result<()> {
         }
     }
 
+    // wrap shared data in Arc<Mutex<>> so the D-Bus server and event loop can both access them
+    let state = Arc::new(Mutex::new(state));
+    let config = Arc::new(Mutex::new(config));
+    let graph =  Arc::new(Mutex::new(graph::Graph::new()));
+
     // std::sync::mpsc for commands going down to PW thread
     // (PW thread is not async, so it uses blocking recv)
-    let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<messages::PwCommand>();
+    let (cmd_tx, cmd_rx) = pipewire::channel::channel::<messages::PwCommand>();
 
     // tokio::sync::mpsc for events coming up from PW thread
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<messages::PwEvent>();
+    let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<messages::PwEvent>();
 
+    let graph_for_pw = Arc::clone(&graph);
     // spawn the pw thread first - it blocks on its own main loop
     let pw_handle = std::thread::spawn(move || {
-        if let Err(e) = pw_thread::run(cmd_rx, event_tx) {
+        if let Err(e) = pw_thread::run(cmd_rx, event_tx, graph_for_pw) {
             error!("Pipewire thread error: {e:#}");
         }
     });
@@ -77,38 +97,17 @@ fn run_daemon() -> anyhow::Result<()> {
 
     rt.block_on(async move {
         info!("tokio runtime ready");
-        let mut current_default: Option<String> = None;
 
-        // event loop: consumes PwEvents from PW thread
-        while let Some(event) = event_rx.recv().await {
-            match event {
-                messages::PwEvent::SinkAdded { name, description } => {
-                    info!(%name, %description, "sink added");
-
-                    // if auto_link_new is set and this sink has no existing state entry, enable automatically
-                    if config.auto_link_new {
-                        state.sink_enabled.entry(name.clone()).or_insert(true);
-                        if let Err(e) = state.save() {
-                            warn!("failed to save state: {e:#}");
-                        }
-                    }
-
-                    // if this sink is enabled in state and we have a default, send LinkSink command
-                    if state.is_sink_enabled(&name) {
-                        if current_default.as_deref() != Some(&name) {
-                            let _ = cmd_tx.send(messages::PwCommand::LinkSink { name });
-                        }
-                    }
-                }
-                messages::PwEvent::SinkRemoved { name } => {
-                    info!(%name, "sink removed");
-                    // links will be torn down by pipewire automatically when node disappears
-                }
-                messages::PwEvent::DefaultChanged { name } => {
-                    info!(%name, "default sink changed");
-                    current_default = Some(name);
-                }
-            }
+        if let Err(e) = dbus_server::run(
+            Arc::clone(&state),
+            Arc::clone(&config),
+            Arc::clone(&graph),
+            cmd_tx,
+            event_rx,
+        )
+        .await
+        {
+            error!("D-Bus server error: {e:#}");
         }
     });
 
