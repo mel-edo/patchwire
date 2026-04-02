@@ -1,6 +1,7 @@
-use crate::graph::{Graph, PortDirection};
 use pipewire::{core::Core, properties::properties};
 use tracing::{debug, info, warn};
+
+use crate::graph::{Graph, PortDirection};
 
 /// Attempt to link the monitor ports of 'default_sink' to the playback ports of 'target_sink'.
 /// 
