@@ -1,9 +1,12 @@
 mod cli;
+mod graph;
+mod link_manager;
+mod pw_thread;
 mod config;
 mod state;
 
 use clap::Parser;
-use tracing::info;
+use tracing::{info, error};
 
 fn main() -> anyhow::Result<()> {
     // Initialise structured logging.
@@ -21,20 +24,28 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         cli::Command::Daemon => {
             info!("patchwork daemon starting");
-            // todo - wire this up to tokio + pw runtime
-            println!("patchwork daemon - scaffold ok");
+
+            // Spawn a dedicated OS thread for PW main loop
+            // PW objects are !Send so they must live and die on this thread
+            let handle = std::thread::spawn(|| {
+                if let Err(e) = pw_thread::run() {
+                    error!("Pipewire thread error: {e:#}")
+                }
+            });
+
+            handle.join().expect("Pipewire thread panicked");
         }
 
         cli::Command::List => {
-            println!("patchwork list - D-Bus client");
+            todo!("patchwork list - D-Bus client");
         }
 
         cli::Command::Toggle { sink } => {
-            println!("patchwork toggle {sink} - D-Bus client");
+            todo!("patchwork toggle {sink} - D-Bus client");
         }
 
         cli::Command::Profile { name } => {
-            println!("patchwork profile {name} - D-Bus client");
+            todo!("patchwork profile {name} - D-Bus client");
         }
     }
 
