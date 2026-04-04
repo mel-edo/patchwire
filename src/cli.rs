@@ -27,4 +27,11 @@ pub enum Command {
         /// Profile name
         name: String,
     },
+
+    /// Volume control
+    Volume {
+        sink: String,
+        /// Volume level from 0.0 to 1.0
+        volume: f32,
+    },
 }

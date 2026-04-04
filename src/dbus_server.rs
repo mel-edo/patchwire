@@ -20,6 +20,7 @@ pub struct PatchwireInterface {
     pub config: Arc<Mutex<Config>>,
     pub graph: Arc<Mutex<Graph>>,
     pub cmd_tx: pipewire::channel::Sender<PwCommand>,
+    pub default_sink: Arc<Mutex<Option<String>>>,
 }
 
 /// SinkInfo is the struct returned by ListSinks over D-Bus
@@ -39,11 +40,7 @@ impl PatchwireInterface {
     fn list_sinks(&self) -> Vec<SinkInfo> {
         let graph = self.graph.lock().unwrap();
         let state = self.state.lock().unwrap();
-        let config = self.config.lock().unwrap();
-
-        let default_name = config.active_profile
-            .as_deref()
-            .unwrap_or("");
+        let current_default = self.default_sink.lock().unwrap().clone();
         
         graph
             .nodes
@@ -52,7 +49,7 @@ impl PatchwireInterface {
             .map(|n| SinkInfo {
                 name: n.name.clone(),
                 description: n.description.clone(),
-                is_default: n.name == default_name,
+                is_default: Some(n.name.clone()) == current_default,
                 is_linked: false,
                 is_enabled: state.is_sink_enabled(&n.name),
             })
@@ -83,6 +80,33 @@ impl PatchwireInterface {
         
         Self::link_state_changed(&emitter, &name, enabled).await.ok();
         info!(%name, enabled, "sink toggled via D-Bus");
+        Ok(())
+    }
+
+    async fn set_sink_volume(
+        &self,
+        name: String,
+        volume: f32,
+    ) -> zbus::fdo::Result<()> {
+        // Clamp volume 0.0 and 1.0
+        let clamped = volume.clamp(0.0, 1.0);
+        let node_id = {
+            let graph = self.graph.lock().unwrap();
+            graph
+                .node_by_name(&name)
+                .map(|n| n.id)
+                .ok_or_else(|| {
+                    zbus::fdo::Error::Failed(format!("sink not found in graph: {name}"))
+                })?
+        };
+
+        self.cmd_tx
+            .send(PwCommand::SetVolume {
+            node_id,
+            volume: clamped
+        }).ok();
+
+        info!(%name, node_id, volume = clamped, "volume changed via D-Bus");
         Ok(())
     }
 
@@ -223,6 +247,7 @@ pub async fn run(
     state: Arc<Mutex<State>>,
     config: Arc<Mutex<Config>>,
     graph: Arc<Mutex<Graph>>,
+    default_sink: Arc<Mutex<Option<String>>>,
     cmd_tx: pipewire::channel::Sender<PwCommand>,
     mut event_rx: mpsc::UnboundedReceiver<PwEvent>,
 ) -> anyhow::Result<()> {
@@ -230,6 +255,7 @@ pub async fn run(
         state,
         config,
         graph: graph.clone(),
+        default_sink,
         cmd_tx,
     };
 

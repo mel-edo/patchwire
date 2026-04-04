@@ -13,6 +13,7 @@ pub struct PortInfo {
     pub id: u32,
     pub node_id: u32,  // which node owns this port
     pub name: String,  // port.name eg. "monitor_FL", "playback_FR"
+    #[allow(dead_code)]
     pub direction: PortDirection,
 }
 
@@ -57,6 +58,7 @@ impl Graph {
         self.nodes.values().find(|n| n.name == name)
     }
 
+    #[allow(dead_code)]
     /// Find all ports belonging to a node, optionally filtered by direction
     pub fn ports_for_node(&self, node_id: u32, direction: Option<&PortDirection>) -> Vec<&PortInfo> {
         self.ports

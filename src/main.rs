@@ -8,7 +8,7 @@ mod config;
 mod state;
 mod dbus_server;
 
-use std::sync::{Arc, Mutex};
+use std::{fs::OpenOptions, os::fd::AsRawFd, sync::{Arc, Mutex}, io::Write};
 
 use clap::Parser;
 use tracing::{info, error};
@@ -23,6 +23,8 @@ fn main() -> anyhow::Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "patchwire=info".into()),
         )
+        .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new("%H:%M:%S".to_string()))
+        .compact()
         .init();
 
     let cli = cli::Cli::parse();
@@ -44,6 +46,10 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Profile { name } => {
             run_async(cli_client::cmd_profile(&name))?;
         }
+
+        cli::Command::Volume { sink, volume } => {
+            run_async(cli_client::cmd_volume(&sink, volume))?;
+        }
     }
 
     Ok(())
@@ -59,6 +65,19 @@ where
 }
 
 fn run_daemon() -> anyhow::Result<()> {
+    let lock_path = "/tmp/patchwire.lock";
+    let lock_file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(lock_path)?;
+
+    let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if ret != 0 {
+        anyhow::bail!("Another instance of patchwire daemon is already running.");
+    }
+    write!(&lock_file, "{}", std::process::id())?;
+    info!("Acquired single-instance lock (pid {})", std::process::id());
+
     let config = config::Config::load()?;
     let mut state = state::State::load()?;
 
@@ -76,6 +95,7 @@ fn run_daemon() -> anyhow::Result<()> {
     let state = Arc::new(Mutex::new(state));
     let config = Arc::new(Mutex::new(config));
     let graph =  Arc::new(Mutex::new(graph::Graph::new()));
+    let default_sink = Arc::new(Mutex::new(None::<String>));
 
     // std::sync::mpsc for commands going down to PW thread
     // (PW thread is not async, so it uses blocking recv)
@@ -85,9 +105,10 @@ fn run_daemon() -> anyhow::Result<()> {
     let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<messages::PwEvent>();
 
     let graph_for_pw = Arc::clone(&graph);
+    let default_sink_for_pw = Arc::clone(&default_sink);
     // spawn the pw thread first - it blocks on its own main loop
     let pw_handle = std::thread::spawn(move || {
-        if let Err(e) = pw_thread::run(cmd_rx, event_tx, graph_for_pw) {
+        if let Err(e) = pw_thread::run(cmd_rx, event_tx, graph_for_pw, default_sink_for_pw) {
             error!("Pipewire thread error: {e:#}");
         }
     });
@@ -102,6 +123,7 @@ fn run_daemon() -> anyhow::Result<()> {
             Arc::clone(&state),
             Arc::clone(&config),
             Arc::clone(&graph),
+            default_sink,
             cmd_tx,
             event_rx,
         )

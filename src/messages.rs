@@ -7,7 +7,10 @@ pub enum PwCommand {
     LinkSink { name: String },
     /// Destroy any active links to this target sink
     UnlinkSink { name: String },
+    /// Set the volume on a specific node
+    SetVolume { node_id: u32, volume: f32 },
     /// Shut down the Pipewire main loop cleanly
+    #[allow(dead_code)]
     Quit,
 }
 
@@ -21,6 +24,7 @@ pub enum PwEvent {
     /// A new audio sink appeared in the graph
     SinkAdded { name: String, description: String },
     /// An audio sink was removed from the graph
+    #[allow(dead_code)]
     SinkRemoved { name: String },
     /// The default sink changed
     DefaultChanged { name: String },
