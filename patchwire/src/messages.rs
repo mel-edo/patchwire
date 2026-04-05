@@ -9,6 +9,8 @@ pub enum PwCommand {
     UnlinkSink { name: String },
     /// Set the volume on a specific node
     SetVolume { node_id: u32, volume: f32 },
+    /// Change default device
+    SetDefaultSink { name: String },
     /// Shut down the Pipewire main loop cleanly
     #[allow(dead_code)]
     Quit,

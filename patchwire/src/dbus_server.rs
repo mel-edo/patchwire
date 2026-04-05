@@ -222,6 +222,14 @@ impl PatchwireInterface {
             .unwrap_or_default()
     }
 
+    async fn set_default_sink(&self, name: String) -> zbus::fdo::Result<()> {
+        self.cmd_tx
+            .send(PwCommand::SetDefaultSink { name: name.clone() })
+            .ok();
+        info!(%name, "default sink change requested via D-Bus");
+        Ok(())
+    }
+
     // Signals
 
     /// Fired when a sink is added or removed from the graph

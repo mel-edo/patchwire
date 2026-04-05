@@ -205,6 +205,33 @@ pub fn run(
                     }
                 }
             }
+            PwCommand::SetDefaultSink { name } => {
+                match std::process::Command::new("wpctl")
+                    .arg("set-default")
+                    .arg(
+                        {
+                            let g = graph.lock().unwrap();
+                            match g.node_by_name(&name) {
+                                Some(n) => n.id.to_string(),
+                                None => {
+                                    warn!("SetDefaultSink: node not found: {name}");
+                                    return;
+                                }
+                            }
+                        }
+                    )
+                    .output()
+                {
+                    Ok(output) if output.status.success() => {
+                        info!(%name, "default sink changed via wpctl");
+                    }
+                    Ok(output) => {
+                        let err = String::from_utf8_lossy(&output.stderr);
+                        error!("wpctl set-default failed: {}", err.trim());
+                    }
+                    Err(e) => error!("failed to exec wpctl: {e}"),
+                }
+            }
             PwCommand::Quit => {
                 mainloop_for_cmd.quit();
             }
