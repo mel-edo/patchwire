@@ -1,0 +1,15 @@
+[package]
+name = "patchwire-gtk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+futures-util = "0.3.32"
+gtk4 = { version = "0.11.1", features = ["v4_12"] }
+libadwaita = { version = "0.9.1", features = ["v1_4"] }
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.51.0", features = ["rt-multi-thread", "macros", "time"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "chrono"] }
+zbus = { version = "5.14.0", features = ["tokio"] }
