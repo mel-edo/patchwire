@@ -4,7 +4,7 @@ After=pipewire.service
 Wants=pipewire.service
 
 [Service]
-ExecStart=patchwire daemon
+ExecStart=/usr/bin/patchwire daemon
 Restart=on-failure
 RestartSec=2
 

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Patchwire
 Comment=PipeWire audio output router
-Exec=/usr/local/bin/patchwire-gtk
+Exec=patchwire-gtk
 Icon=audio-headphones
 Terminal=false
 Type=Application

@@ -9,10 +9,13 @@ install: build
 	install -Dm755 target/release/patchwire $(PREFIX)/bin/patchwire
 	install -Dm755 target/release/patchwire-gtk $(PREFIX)/bin/patchwire-gtk
 	install -Dm644 data/patchwire.service $(SYSTEMD_DIR)/patchwire.service
+
+	sed -i "s|/usr/bin|$(PREFIX)/bin|" $(SYSTEMD_DIR)/patchwire.service
 	install -Dm644 data/patchwire.desktop $(APPS_DIR)/patchwire.desktop
 	systemctl --user daemon-reload
-	systemctl --user enable patchwire
-	@echo "installed succesfully, launch Patchwire from your app menu."
+	systemctl --user enable patchwire.service --now
+	@echo ""
+	@echo "Installed successfully, launch Patchwire from your app menu."
 
 uninstall:
 	systemctl --user disable --now patchwire || true
