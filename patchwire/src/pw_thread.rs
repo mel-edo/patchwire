@@ -167,6 +167,11 @@ pub fn run(
             PwCommand::LinkSink { name } => {
                 let default_name = default_sink_name_for_cmd.lock().unwrap().clone();
                 if let Some(def_name) = default_name {
+                    if def_name == name {
+                        warn!("Refusing to link '{name}' to itself (it is the current default)");
+                        return;
+                    }
+                    
                     let g = graph.lock().unwrap();
                     
                     match crate::link_manager::create_links(&core_for_cmd, &g, &def_name, &name) {
@@ -206,6 +211,9 @@ pub fn run(
                 }
             }
             PwCommand::SetDefaultSink { name } => {
+                if active_links_for_cmd.borrow_mut().remove(&name).is_some() {
+                    info!("Removed link for '{name}' before promoting it to default");
+                }
                 match std::process::Command::new("wpctl")
                     .arg("set-default")
                     .arg(

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{info, error};
+use tracing::info;
 use zbus::{connection, interface, object_server::SignalEmitter, zvariant::Type};
 
 use crate::{
@@ -110,108 +110,6 @@ impl PatchwireInterface {
         Ok(())
     }
 
-    /// Return all saved profile names
-    fn get_profiles(&self) -> Vec<String> {
-        self.config.lock().unwrap().profiles.keys().cloned().collect()
-    }
-
-    /// Switch to a saved profile - updates state and sends LinkSink/UnlinkSink for each sink in the graph
-    async fn set_active_profile(
-        &self,
-        name: String,
-        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) -> zbus::fdo::Result<()> {
-        let sinks_to_enable: Vec<String>;
-        let all_sink_names: Vec<String>;
-
-        {
-            let mut config = self.config.lock().unwrap();
-
-            let profile = config.profiles.get(&name).ok_or_else(|| {
-                zbus::fdo::Error::Failed(format!("profile not found: {name}"))
-            })?;
-
-            sinks_to_enable = profile.enabled_sinks.clone();
-            config.active_profile = Some(name.clone());
-
-            // Persist the active_profile change
-            if let Err(e) = config.save() {
-                error!("Failed to save config: {e:#}");
-            }
-        }
-
-        {
-            let graph = self.graph.lock().unwrap();
-            all_sink_names = graph
-                .nodes
-                .values()
-                .filter(|n| n.media_class == "Audio/Sink")
-                .map(|n| n.name.clone())
-                .collect();
-        }
-
-        // Apply the profile: enable sinks listed in it, disable the rest
-        {
-            let mut state = self.state.lock().unwrap();
-            for sink_name in &all_sink_names {
-                let enabled = sinks_to_enable.contains(sink_name);
-                state.set_sink_enabled(sink_name, enabled).map_err(|e| {
-                    zbus::fdo::Error::Failed(format!("failed to save state: {e:#}"))
-                })?;
-
-                let cmd = if enabled {
-                    PwCommand::LinkSink { name: sink_name.clone() }
-                } else {
-                    PwCommand::UnlinkSink { name: sink_name.clone() }
-                };
-                self.cmd_tx.send(cmd).ok();
-            }
-        }
-
-        Self::sinks_changed(&emitter).await.ok();
-        info!(%name, "profile activated via D-Bus");
-        Ok(())
-    }
-
-    /// Save current state as a named profile
-    fn save_profile(&self, name: String) -> zbus::fdo::Result<()> {
-        let state = self.state.lock().unwrap();
-        let mut config = self.config.lock().unwrap();
-
-        let enabled_sinks: Vec<String> = state
-            .sink_enabled
-            .iter()
-            .filter_map(|(k, v)| if *v { Some(k.clone()) } else { None })
-            .collect();
-
-        config.profiles.insert(name.clone(), crate::config::Profile {
-            description: None,
-            enabled_sinks,
-        });
-
-        // Persist the new profile
-        if let Err(e) = config.save() {
-            error!("Failed to save config: {e:#}");
-        }
-
-        info!(%name, "profile saved via D-Bus");
-        Ok(())
-    }
-
-    /// Delete a saved profile
-    fn delete_profile(&self, name: String) -> zbus::fdo::Result<()> {
-        let mut config = self.config.lock().unwrap();
-        if config.profiles.remove(&name).is_none() {
-            return Err(zbus::fdo::Error::Failed(format!("profile not found: {name}")));
-        }
-
-        if let Err(e) = config.save() {
-            error!("Failed to save config after deleting profile: {e:#}");
-        }
-        info!(%name, "profile deleted via D-Bus");
-        Ok(())
-    }
-
     /// Return the current default sink name
     fn get_default_sink(&self) -> String {
         self.config
@@ -228,6 +126,31 @@ impl PatchwireInterface {
             .ok();
         info!(%name, "default sink change requested via D-Bus");
         Ok(())
+    }
+
+    fn get_sink_volume(&self, name: String) -> zbus::fdo::Result<f64> {
+        let node_id = {
+            let graph = self.graph.lock().unwrap();
+            graph
+                .node_by_name(&name)
+                .map(|n| n.id)
+                .ok_or_else(|| zbus::fdo::Error::Failed(format!("sink not found: {name}")))?
+        };
+
+        let output = std::process::Command::new("wpctl")
+            .arg("get-volume")
+            .arg(node_id.to_string())
+            .output()
+            .map_err(|e| zbus::fdo::Error::Failed(format!("wpctl failed: {e}")))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let volume = stdout
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(1.0);
+
+        Ok(volume)
     }
 
     // Signals

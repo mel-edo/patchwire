@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 use gtk4::prelude::*;
-use gtk4::{Align, ScrolledWindow, PolicyType, Box as GBox, Orientation, StringList, glib};
+use gtk4::{Align, ScrolledWindow, PolicyType, Box as GBox, Orientation, glib};
 use libadwaita as adw;
 use adw::prelude::*;
 use tokio::runtime::Handle;
@@ -64,103 +64,82 @@ impl PatchwireWindow {
         sink_group.set_description(Some("Toggle routing to secondary outputs"));
         outer_box.append(&sink_group);
 
-        // default sink row
-        let default_row = adw::ActionRow::new();
-        default_row.set_title("Default sink");
-        default_row.set_subtitle("Loading...");
+        // default sink expander
+        let default_expander = adw::ExpanderRow::new();
+        default_expander.set_title("Default sink");
+        default_expander.set_subtitle("Loading...");
         let icon = gtk4::Image::from_icon_name("audio-volume-high-symbolic");
-        default_row.add_prefix(&icon);
-        let default_btn = gtk4::Button::with_label("Change");
-        default_btn.set_valign(Align::Center);
-        default_btn.add_css_class("flat");
-        default_row.add_suffix(&default_btn);
-        sink_group.add(&default_row);
+        default_expander.add_prefix(&icon);
+        let default_change_btn = gtk4::Button::with_label("Change");
+        default_change_btn.set_valign(Align::Center);
+        default_change_btn.add_css_class("flat");
+        default_expander.add_suffix(&default_change_btn);
 
-        // profiles group
-        let profile_group = adw::PreferencesGroup::new();
-        profile_group.set_title("Profiles");
-        outer_box.append(&profile_group);
-
-        let profile_combo = adw::ComboRow::new();
-        profile_combo.set_title("Active profile");
-        profile_combo.set_model(Some(&gtk4::StringList::new(&[])));
-        profile_group.add(&profile_combo);
-
-        let save_row = adw::ActionRow::new();
-        save_row.set_title("Save current state as profile");
-        let save_btn = gtk4::Button::with_label("Save...");
-        save_btn.set_valign(Align::Center);
-        save_btn.add_css_class("suggested-action");
-        save_row.add_suffix(&save_btn);
-        profile_group.add(&save_row);
-
-        let del_row = adw::ActionRow::new();
-        del_row.set_title("Delete active profile");
-        let del_btn = gtk4::Button::with_label("Delete");
-        del_btn.set_valign(Align::Center);
-        del_btn.add_css_class("destructive-action");
-        del_row.add_suffix(&del_btn);
-        profile_group.add(&del_row);
+        // default volume slider inside expander
+        let default_vol_row = adw::ActionRow::new();
+        default_vol_row.set_title("Volume");
+        let default_scale = gtk4::Scale::with_range(Orientation::Horizontal, 0.0, 1.0, 0.01);
+        default_scale.set_hexpand(true);
+        default_scale.set_valign(Align::Center);
+        default_scale.set_width_request(200);
+        default_scale.set_draw_value(true);
+        default_scale.set_format_value_func(|_, v| format!("{:.0}%", v * 100.0));
+        default_vol_row.add_suffix(&default_scale);
+        default_expander.add_row(&default_vol_row);
+        sink_group.add(&default_expander);
 
         // shared state - store sink rows so we can update them from singal callbacks
-        let sink_rows: Arc<Mutex<Vec<(String, adw::SwitchRow)>>> =
+        let sink_rows: Arc<Mutex<Vec<(String, gtk4::Switch, adw::ExpanderRow)>>> =
             Arc::new(Mutex::new(Vec::new()));
         let handler_ids: Arc<Mutex<Vec<(String, glib::SignalHandlerId)>>> =
             Arc::new(Mutex::new(Vec::new()));
-        let profile_updating = Arc::new(Mutex::new(false));
 
         // initial data fetch
         {
-            let proxy = Arc::clone(&proxy);
-            let sink_group = sink_group.clone();
-            let default_row = default_row.clone();
-            let sink_rows = Arc::clone(&sink_rows);
-            let profile_combo = profile_combo.clone();
-            let rt2 = rt.clone();
+            let sinks = rt.block_on(async {
+                for _ in 0..10 {
+                    let sinks = proxy.list_sinks().await.unwrap_or_default();
+                    if !sinks.is_empty() {
+                        return sinks;
+                    }
+                    eprintln!("no sinks yet, retrying...");
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                }
+                eprintln!("giving up waiting for sinks");
+                vec![]
+            });
 
-            let (sinks, profiles) = {
-                let proxy2 = Arc::clone(&proxy);
-                rt.block_on(async move {
-                    let sinks = proxy2.list_sinks().await.unwrap_or_default();
-                    let profiles = proxy2.get_profiles().await.unwrap_or_default();
-                    (sinks, profiles)
-                })
-            };
+            // wire default sink volume slider
+            if let Some(default_sink) = sinks.iter().find(|s| s.is_default) {
+                let vol = rt.block_on(async {
+                    proxy.get_sink_volume(&default_sink.name).await.unwrap_or(1.0)
+                });
+                default_scale.set_value(vol);
+
+                let name = default_sink.name.clone();
+                let proxy_vol = Arc::clone(&proxy);
+                let rt_vol = rt.clone();
+                default_scale.connect_value_changed(move |s| {
+                    let vol = s.value() as f32;
+                    let name = name.clone();
+                    let proxy2 = Arc::clone(&proxy_vol);
+                    rt_vol.spawn(async move {
+                        if let Err(e) = proxy2.set_sink_volume(&name, vol).await {
+                            eprintln!("set_sink_volume failed: {e}");
+                        }
+                    });
+                });
+            }
 
             populate_sinks(
                 &sink_group,
-                &default_row,
+                &default_expander,
                 &sink_rows,
                 &handler_ids,
                 sinks,
                 Arc::clone(&proxy),
-                rt2,
+                rt.clone(),
             );
-            populate_profiles(&profile_combo, profiles, &profile_updating);
-        }
-
-        // profile combo selection
-        {
-            let proxy = Arc::clone(&proxy);
-            let rt2 = rt.clone();
-            let profile_updating = Arc::clone(&profile_updating);
-            profile_combo.connect_selected_notify(move |combo| {
-                if *profile_updating.lock().unwrap() {
-                    return;
-                }
-                let idx = combo.selected() as usize;
-                let model = combo.model().unwrap();
-                let list = model.downcast::<StringList>().unwrap();
-                if let Some(name) = list.string(idx as u32) {
-                    let name = name.to_string();
-                    let proxy2 = Arc::clone(&proxy);
-                    rt2.spawn(async move {
-                        if let Err(e) = proxy2.set_active_profile(&name).await {
-                            eprintln!("set_active_profile failed: {e}");
-                        }
-                    });
-                }
-            });
         }
 
         // signal subscriptions
@@ -171,7 +150,7 @@ impl PatchwireWindow {
             let sink_rows_for_default = Arc::clone(&sink_rows);
             let handler_ids_for_default = Arc::clone(&handler_ids);
             let sink_group_for_default = sink_group.clone();
-            let default_row_for_default = default_row.clone();
+            let default_expander_for_default = default_expander.clone();
 
             // channel carries plain Vec<SinkInfo> from tokio to glib main context
             let (tx, rx) = std::sync::mpsc::channel::<Vec<crate::dbus_client::SinkInfo>>();
@@ -208,7 +187,7 @@ impl PatchwireWindow {
                 while let Ok(sinks) = rx.try_recv() {
                     populate_sinks(
                         &sink_group_for_default,
-                        &default_row_for_default,
+                        &default_expander_for_default,
                         &sink_rows_for_default,
                         &handler_ids_for_default,
                         sinks,
@@ -223,146 +202,14 @@ impl PatchwireWindow {
             let _ = handler_ids_for_state;
         }
 
-        // save button
-        {
-            let proxy = Arc::clone(&proxy);
-            let rt2 = rt.clone();
-            let profile_combo = profile_combo.clone();
-            let profile_updating = Arc::clone(&profile_updating);
-
-            let popover = gtk4::Popover::new();
-            popover.set_parent(&save_btn);
-
-            let pop_box = GBox::builder()
-                .orientation(Orientation::Vertical)
-                .spacing(8)
-                .margin_top(8)
-                .margin_bottom(8)
-                .margin_start(8)
-                .margin_end(8)
-                .build();
-            popover.set_child(Some(&pop_box));
-
-            let entry = gtk4::Entry::new();
-            entry.set_placeholder_text(Some("Profile name..."));
-            entry.set_width_chars(20);
-            pop_box.append(&entry);
-
-            let confirm_btn = gtk4::Button::with_label("Save");
-            confirm_btn.add_css_class("suggested-action");
-            pop_box.append(&confirm_btn);
-
-            // open popover on click, clear previous text
-            {
-                let popover = popover.clone();
-                let entry = entry.clone();
-                save_btn.connect_clicked(move |_| {
-                    entry.set_text("");
-                    popover.popup();
-                });
-            }
-
-            {
-                let confirm_btn = confirm_btn.clone();
-                entry.connect_activate(move |_| {
-                    confirm_btn.emit_clicked();
-                });
-            }
-
-            // confirm
-            {
-                let popover = popover.clone();
-                let entry = entry.clone();
-                confirm_btn.connect_clicked(move |_| {
-                    let name = entry.text().trim().to_string();
-                    if name.is_empty() {
-                        return;
-                    }
-                    popover.popdown();
-                    let proxy2 = Arc::clone(&proxy);
-                    let profile_combo2 = profile_combo.clone();
-                    let profile_updating2 = Arc::clone(&profile_updating);
-                    let profiles = rt2.block_on(async move {
-                        if let Err(e) = proxy2.save_profile(&name).await {
-                            eprintln!("save_profile failed: {e}");
-                            return vec![];
-                        }
-                        proxy2.get_profiles().await.unwrap_or_default()
-                    });
-                    populate_profiles(&profile_combo2, profiles, &profile_updating2);
-                });
-            }
-        };
-
-        // delete button
-        {
-            let proxy = Arc::clone(&proxy);
-            let rt2 = rt.clone();
-            let profile_combo = profile_combo.clone();
-            let profile_updating = Arc::clone(&profile_updating);
-
-            let popover = gtk4::Popover::new();
-            popover.set_parent(&del_btn);
-
-            let pop_box = GBox::builder()
-                .orientation(Orientation::Vertical)
-                .spacing(8)
-                .margin_top(8)
-                .margin_bottom(8)
-                .margin_start(8)
-                .margin_end(8)
-                .build();
-            popover.set_child(Some(&pop_box));
-
-            let label = gtk4::Label::new(Some("Delete this profile?"));
-            pop_box.append(&label);
-
-            let confirm_btn = gtk4::Button::with_label("Delete");
-            confirm_btn.add_css_class("destructive-action");
-            pop_box.append(&confirm_btn);
-
-            {
-                let popover = popover.clone();
-                del_btn.connect_clicked(move |_| {
-                    popover.popup();
-                });
-            }
-
-            {
-                let popover = popover.clone();
-                let profile_combo = profile_combo.clone();
-                confirm_btn.connect_clicked(move |_| {
-                    let idx = profile_combo.selected() as u32;
-                    let model = profile_combo.model().unwrap();
-                    let list = model.downcast::<StringList>().unwrap();
-                    let name = match list.string(idx) {
-                        Some(n) => n.to_string(),
-                        None => return,
-                    };
-                    popover.popdown();
-                    let proxy2 = Arc::clone(&proxy);
-                    let profile_combo2 = profile_combo.clone();
-                    let profile_updating2 = Arc::clone(&profile_updating);
-                    let profiles = rt2.block_on(async move {
-                        if let Err(e) = proxy2.delete_profile(&name).await {
-                            eprintln!("delete_profile failed: {e}");
-                            return vec![];
-                        }
-                        proxy2.get_profiles().await.unwrap_or_default()
-                    });
-                    populate_profiles(&profile_combo2, profiles, &profile_updating2);
-                });
-            }
-        }
-
         // default sink popover
         {
             let proxy = Arc::clone(&proxy);
             let rt2 = rt.clone();
-            let default_row = default_row.clone();
+            let default_expander = default_expander.clone();
 
             let popover = gtk4::Popover::new();
-            popover.set_parent(&default_btn);
+            popover.set_parent(&default_change_btn);
 
             let pop_box = GBox::builder()
                 .orientation(Orientation::Vertical)
@@ -390,10 +237,10 @@ impl PatchwireWindow {
                 let all_sinks = Arc::clone(&all_sinks);
                 let proxy = Arc::clone(&proxy);
                 let rt2 = rt.clone();
-                let default_row = default_row.clone();
+                let default_expander = default_expander.clone();
                 let pop_box = pop_box.clone();
 
-                default_btn.connect_clicked(move |_| {
+                default_change_btn.connect_clicked(move |_| {
                     // clear old button
                     while let Some(child) = pop_box.first_child() {
                         pop_box.remove(&child);
@@ -410,7 +257,7 @@ impl PatchwireWindow {
                         let proxy2 = Arc::clone(&proxy);
                         let rt3 = rt2.clone();
                         let popover2 = popover.clone();
-                        let default_row2 = default_row.clone();
+                        let default_expander2 = default_expander.clone();
                         let desc = sink.description.clone();
                         let name = sink.name.clone();
 
@@ -419,7 +266,7 @@ impl PatchwireWindow {
                             let proxy3 = Arc::clone(&proxy2);
                             let name2 = name.clone();
                             let desc2 = desc.clone();
-                            let default_row3 = default_row2.clone();
+                            let default_expander3 = default_expander2.clone();
                             let success = rt3.block_on(async move {
                                 match proxy3.set_default_sink(&name2).await {
                                     Ok(_) => true,
@@ -430,7 +277,7 @@ impl PatchwireWindow {
                                 }
                             });
                             if success {
-                                default_row3.set_subtitle(&desc2);
+                                default_expander3.set_subtitle(&desc2);
                             }
                         });
                         pop_box.append(&btn);
@@ -459,6 +306,78 @@ impl PatchwireWindow {
                 glib::ControlFlow::Continue
             });
         }
+        // quick actions group
+        let action_group = adw::PreferencesGroup::new();
+        action_group.set_title("Quick Actions");
+        outer_box.append(&action_group);
+
+        let action_row = adw::ActionRow::new();
+        action_row.set_title("Route audio");
+        action_row.set_subtitle("Enable or disable all secondary outputs at once");
+
+        let all_btn = gtk4::Button::with_label("All On");
+        all_btn.set_valign(Align::Center);
+        all_btn.add_css_class("suggested-action");
+
+        let none_btn = gtk4::Button::with_label("All Off");
+        none_btn.set_valign(Align::Center);
+        none_btn.add_css_class("destructive-action");
+
+        action_row.add_suffix(&none_btn);
+        action_row.add_suffix(&all_btn);
+        action_group.add(&action_row);
+        
+        // all on
+        {
+            let proxy = Arc::clone(&proxy);
+            let rt2 = rt.clone();
+            let sink_rows = Arc::clone(&sink_rows);
+            let handler_ids = Arc::clone(&handler_ids);
+            all_btn.connect_clicked(move |_| {
+                let rows = sink_rows.lock().unwrap();
+                let ids = handler_ids.lock().unwrap();
+                for (name, toggle, _) in rows.iter() {
+                    if let Some((_, id)) = ids.iter().find(|(n, _)| n == name) {
+                        toggle.block_signal(id);
+                        toggle.set_active(true);
+                        toggle.unblock_signal(id);
+                    }
+                    let name = name.clone();
+                    let proxy2 = Arc::clone(&proxy);
+                    rt2.spawn(async move {
+                        if let Err(e) = proxy2.set_sink_enabled(&name, true).await {
+                            eprintln!("set_sink_enabled failed: {e}");
+                        }
+                    });
+                }
+            });
+        }
+
+        // all off
+        {
+            let proxy = Arc::clone(&proxy);
+            let rt2 = rt.clone();
+            let sink_rows = Arc::clone(&sink_rows);
+            let handler_ids = Arc::clone(&handler_ids);
+            none_btn.connect_clicked(move |_| {
+                let rows = sink_rows.lock().unwrap();
+                let ids = handler_ids.lock().unwrap();
+                for (name, toggle, _) in rows.iter() {
+                    if let Some((_, id)) = ids.iter().find(|(n, _)| n == name) {
+                        toggle.block_signal(id);
+                        toggle.set_active(false);
+                        toggle.unblock_signal(id);
+                    }
+                    let name = name.clone();
+                    let proxy2 = Arc::clone(&proxy);
+                    rt2.spawn(async move {
+                        if let Err(e) = proxy2.set_sink_enabled(&name, false).await {
+                            eprintln!("set_sink_enabled failed: {e}");
+                        }
+                    });
+                }
+            });
+        }
 
         Self { window }
     }
@@ -471,8 +390,8 @@ impl PatchwireWindow {
 // helpers
 fn populate_sinks(
     sink_group: &adw::PreferencesGroup,
-    default_row: &adw::ActionRow,
-    sink_rows: &Arc<Mutex<Vec<(String, adw::SwitchRow)>>>,
+    default_expander: &adw::ExpanderRow,
+    sink_rows: &Arc<Mutex<Vec<(String, gtk4::Switch, adw::ExpanderRow)>>>,
     handler_ids: &Arc<Mutex<Vec<(String, glib::SignalHandlerId)>>>,
     sinks: Vec<SinkInfo>,
     proxy: Arc<PatchwireDaemonProxy<'static>>,
@@ -482,28 +401,34 @@ fn populate_sinks(
     let mut rows = sink_rows.lock().unwrap();
     let mut ids = handler_ids.lock().unwrap();
 
-    for (_, row) in rows.iter() {
-        sink_group. remove(row);
+    for (_, _, expander) in rows.iter() {
+        sink_group.remove(expander);
     }
     rows.clear();
     ids.clear();
 
     for sink in sinks {
         if sink.is_default {
-            default_row.set_subtitle(&sink.description);
+            default_expander.set_subtitle(&sink.description);
             continue;
         }
 
-        let row = adw::SwitchRow::new();
-        row.set_title(&sink.description);
-        row.set_subtitle(&sink.name);
+        // expander row (the sink header)
+        let expander = adw::ExpanderRow::new();
+        expander.set_title(&sink.description);
+        expander.set_subtitle(&sink.name);
+
+        // toggle switch on the right
+        let toggle = gtk4::Switch::new();
+        toggle.set_valign(Align::Center);
+        expander.add_suffix(&toggle);
 
         // wire toggle
         let name = sink.name.clone();
         let proxy2 = Arc::clone(&proxy);
         let rt2 = rt.clone();
-        let handler_id = row.connect_active_notify(move |r| {
-            let enabled = r.is_active();
+        let handler_id = toggle.connect_active_notify(move |t| {
+            let enabled = t.is_active();
             let name = name.clone();
             let proxy3 = Arc::clone(&proxy2);
             rt2.spawn(async move {
@@ -513,19 +438,46 @@ fn populate_sinks(
             });
         });
 
-        row.block_signal(&handler_id);
-        row.set_active(sink.is_enabled);
-        row.unblock_signal(&handler_id);
+        toggle.block_signal(&handler_id);
+        toggle.set_active(sink.is_enabled);
+        toggle.unblock_signal(&handler_id);
 
+        // volume row inside the expander
+        let vol_row = adw::ActionRow::new();
+        vol_row.set_title("Volume");
+
+        let scale = gtk4::Scale::with_range(Orientation::Horizontal, 0.0, 1.0, 0.01);
+        scale.set_hexpand(true);
+        scale.set_valign(Align::Center);
+        scale.set_width_request(200);
+        scale.set_draw_value(true);
+        scale.set_format_value_func(|_, v| format!("{:.0}%", v * 100.0));
+
+        // fetch current volume
+        let current_vol = rt.block_on(async {
+            proxy.get_sink_volume(&sink.name).await.unwrap_or(1.0)
+        });
+        scale.set_value(current_vol);
+
+        // wire volume change - use value_changed with a small debounce flag
+        let name_vol = sink.name.clone();
+        let proxy_vol = Arc::clone(&proxy);
+        let rt_vol = rt.clone();
+        scale.connect_value_changed(move |s| {
+            let vol = s.value() as f32;
+            let name = name_vol.clone();
+            let proxy2 = Arc::clone(&proxy_vol);
+            rt_vol.spawn(async move {
+                if let Err(e) = proxy2.set_sink_volume(&name, vol).await {
+                    eprintln!("set_sink_volume failed: {e}");
+                }
+            });
+        });
+
+        vol_row.add_suffix(&scale);
+        expander.add_row(&vol_row);
         ids.push((sink.name.clone(), handler_id));
-        sink_group.add(&row);
-        rows.push((sink.name.clone(), row));
+        rows.push((sink.name.clone(), toggle, expander.clone()));
+        sink_group.add(&expander);
     }
-}
-
-fn populate_profiles(combo: &adw::ComboRow, profiles: Vec<String>, updating: &Arc<Mutex<bool>>) {
-    *updating.lock().unwrap() = true;
-    let list: Vec<&str> = profiles.iter().map(|s| s.as_str()).collect();
-    combo.set_model(Some(&StringList::new(&list)));
-    *updating.lock().unwrap() = false;
 }
