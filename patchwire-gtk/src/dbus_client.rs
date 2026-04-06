@@ -1,5 +1,4 @@
-use anyhow::Result;
-use zbus::{Connection, proxy};
+use zbus::proxy;
 
 #[derive(Debug, Clone, zbus::zvariant::Type, serde::Serialize, serde::Deserialize)]
 pub struct SinkInfo {
@@ -28,15 +27,6 @@ pub trait PatchwireDaemon {
     fn link_state_changed(&self, name: &str, linked: bool) -> zbus::Result<()>;
     #[zbus(signal)]
     fn default_changed(&self, new_default: &str) -> zbus::Result<()>;
-}
-
-pub async fn connect() -> Result<PatchwireDaemonProxy<'static>> {
-    let conn = Connection::session().await?;
-
-    let proxy = PatchwireDaemonProxy::builder(&conn)
-        .build()
-        .await?;
-    Ok(proxy)
 }
 
 pub async fn ping(proxy: &PatchwireDaemonProxy<'static>) -> bool {
