@@ -16,7 +16,7 @@ depends=(
 provides=('patchwire')
 conflicts=('patchwire')
 source=("patchwire-bin-v$pkgver-x86_64-linux.tar.gz::https://github.com/mel-edo/patchwire/releases/download/v$pkgver/patchwire-v$pkgver-x86_64-linux.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('b975455564f70b9575710528c0db5898d071946a21c651b137e84c7f238a5ca0')
 
 package() {
   cd "$srcdir"
