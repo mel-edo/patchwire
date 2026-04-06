@@ -4,6 +4,8 @@
 
 Play through your headphones and speakers at the same time. Patchwire watches the PipeWire graph and manages the links for you.
 
+[![AUR version](https://img.shields.io/aur/version/patchwire)](https://aur.archlinux.org/packages/patchwire)
+[![AUR version](https://img.shields.io/aur/version/patchwire-bin)](https://aur.archlinux.org/packages/patchwire-bin)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Rust](https://img.shields.io/badge/rust-orange.svg)](https://www.rust-lang.org/)
 
