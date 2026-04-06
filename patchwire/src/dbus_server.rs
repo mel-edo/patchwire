@@ -6,7 +6,6 @@ use tracing::info;
 use zbus::{connection, interface, object_server::SignalEmitter, zvariant::Type};
 
 use crate::{
-    config::Config,
     graph::Graph,
     messages::{PwCommand, PwEvent},
     state::State,
@@ -17,7 +16,6 @@ use crate::{
 /// the event loop (which updates state when PW events arrive)
 pub struct PatchwireInterface {
     pub state: Arc<Mutex<State>>,
-    pub config: Arc<Mutex<Config>>,
     pub graph: Arc<Mutex<Graph>>,
     pub cmd_tx: pipewire::channel::Sender<PwCommand>,
     pub default_sink: Arc<Mutex<Option<String>>>,
@@ -112,10 +110,9 @@ impl PatchwireInterface {
 
     /// Return the current default sink name
     fn get_default_sink(&self) -> String {
-        self.config
+        self.default_sink
             .lock()
             .unwrap()
-            .active_profile
             .clone()
             .unwrap_or_default()
     }
@@ -176,7 +173,6 @@ impl PatchwireInterface {
 /// This is spawned as a tokio task from main.rs
 pub async fn run(
     state: Arc<Mutex<State>>,
-    config: Arc<Mutex<Config>>,
     graph: Arc<Mutex<Graph>>,
     default_sink: Arc<Mutex<Option<String>>>,
     cmd_tx: pipewire::channel::Sender<PwCommand>,
@@ -184,7 +180,6 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let iface = PatchwireInterface {
         state,
-        config,
         graph: graph.clone(),
         default_sink,
         cmd_tx,

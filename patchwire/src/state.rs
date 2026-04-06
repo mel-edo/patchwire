@@ -60,8 +60,9 @@ impl State {
 }
 
 fn state_path() -> std::path::PathBuf {
-    crate::config::Config::config_path()
-        .parent()
-        .expect("config path should have a parent directory")
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("~"))
+        .join(".config")
+        .join("patchwire")
         .join("state.json")
 }

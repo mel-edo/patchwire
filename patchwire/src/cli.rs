@@ -12,22 +12,13 @@ pub struct Cli {
 pub enum Command {
     /// Start the routing daemon (run via systemd or manually)
     Daemon,
-
     /// List all detected audio sinks and their link state
     List,
-
     /// Toggle linking for a specific sink
     Toggle {
         /// Sink name (as shown by 'patchwire list')
         sink: String,
     },
-
-    /// Switch to a saved profile
-    Profile {
-        /// Profile name
-        name: String,
-    },
-
     /// Volume control
     Volume {
         sink: String,

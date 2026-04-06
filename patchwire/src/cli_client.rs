@@ -13,8 +13,6 @@ use crate::dbus_server::SinkInfo;
 trait PatchwireDaemon {
     fn list_sinks(&self) -> zbus::Result<Vec<SinkInfo>>;
     fn set_sink_enabled(&self, name: &str, enabled: bool) -> zbus::Result<()>;
-    fn get_profiles(&self) -> zbus::Result<Vec<String>>;
-    fn set_active_profile(&self, name: &str) -> zbus::Result<()>;
     fn get_default_sink(&self) -> zbus::Result<String>;
     fn set_sink_volume(&self, name: &str, volume: f32) -> zbus::Result<()>;
 }
@@ -73,13 +71,6 @@ pub async fn cmd_toggle(sink_input: &str) -> anyhow::Result<()> {
 
     let state_str = if new_state { "enabled" } else { "disabled" };
     println!("Successfully {} routing to {}", state_str, target.description);
-    Ok(())
-}
-
-pub async fn cmd_profile(name: &str) -> anyhow::Result<()> {
-    let proxy = connect().await?;
-    proxy.set_active_profile(name).await?;
-    println!("switched to profile: {name}");
     Ok(())
 }
 

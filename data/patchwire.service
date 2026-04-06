@@ -1,0 +1,12 @@
+[Unit]
+Description=Patchwire audio routing daemon
+After=pipewire.service
+Wants=pipewire.service
+
+[Service]
+ExecStart=patchwire daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

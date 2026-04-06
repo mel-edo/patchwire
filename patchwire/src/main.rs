@@ -4,7 +4,6 @@ mod graph;
 mod link_manager;
 mod messages;
 mod pw_thread;
-mod config;
 mod state;
 mod dbus_server;
 
@@ -26,7 +25,6 @@ fn main() -> anyhow::Result<()> {
         .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new("%H:%M:%S".to_string()))
         .compact()
         .init();
-
     let cli = cli::Cli::parse();
 
     match cli.command {
@@ -34,19 +32,12 @@ fn main() -> anyhow::Result<()> {
             info!("patchwire daemon starting");
             run_daemon()?;
         }
-
         cli::Command::List => {
             run_async(cli_client::cmd_list())?;
         }
-
         cli::Command::Toggle { sink } => {
             run_async(cli_client::cmd_toggle(&sink))?;
         }
-
-        cli::Command::Profile { name } => {
-            run_async(cli_client::cmd_profile(&name))?;
-        }
-
         cli::Command::Volume { sink, volume } => {
             run_async(cli_client::cmd_volume(&sink, volume))?;
         }
@@ -77,23 +68,10 @@ fn run_daemon() -> anyhow::Result<()> {
     }
     write!(&lock_file, "{}", std::process::id())?;
     info!("Acquired single-instance lock (pid {})", std::process::id());
-
-    let config = config::Config::load()?;
-    let mut state = state::State::load()?;
-
-    // Apply active profile into state on startup so state reflects what profile says for sinks we haven't seen a toggle for
-    if let Some(profile_name) = &config.active_profile {
-        if let Some(profile) = config.profiles.get(profile_name) {
-            info!(%profile_name, "applying active profile on startup");
-            for sink in &profile.enabled_sinks {
-                state.sink_enabled.entry(sink.clone()).or_insert(true);
-            }
-        }
-    }
+    let state = state::State::load()?;
 
     // wrap shared data in Arc<Mutex<>> so the D-Bus server and event loop can both access them
     let state = Arc::new(Mutex::new(state));
-    let config = Arc::new(Mutex::new(config));
     let graph =  Arc::new(Mutex::new(graph::Graph::new()));
     let default_sink = Arc::new(Mutex::new(None::<String>));
 
@@ -121,7 +99,6 @@ fn run_daemon() -> anyhow::Result<()> {
 
         if let Err(e) = dbus_server::run(
             Arc::clone(&state),
-            Arc::clone(&config),
             Arc::clone(&graph),
             default_sink,
             cmd_tx,
