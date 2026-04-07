@@ -11,7 +11,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -22,7 +22,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -64,7 +64,7 @@ jobs:
           echo "SRC_SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
 
       - name: Publish patchwire-bin to AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v3
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
         with:
           pkgname: patchwire-bin
           pkgbuild: ./packaging/patchwire-bin/PKGBUILD
@@ -77,7 +77,7 @@ jobs:
           BIN_SHA256: ${{ env.BIN_SHA256 }}
 
       - name: Publish patchwire to AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v3
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
         with:
           pkgname: patchwire
           pkgbuild: ./packaging/patchwire/PKGBUILD
