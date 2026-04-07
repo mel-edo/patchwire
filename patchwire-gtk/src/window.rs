@@ -51,7 +51,7 @@ impl PatchwireWindow {
         let outer_box = GBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(12)
-            .margin_top(12)
+            .margin_top(24)
             .margin_bottom(12)
             .margin_start(12)
             .margin_end(12)
@@ -306,6 +306,7 @@ impl PatchwireWindow {
                 glib::ControlFlow::Continue
             });
         }
+
         // quick actions group
         let action_group = adw::PreferencesGroup::new();
         action_group.set_title("Quick Actions");
@@ -315,63 +316,56 @@ impl PatchwireWindow {
         action_row.set_title("Route audio");
         action_row.set_subtitle("Enable or disable all secondary outputs at once");
 
-        let all_btn = gtk4::Button::with_label("All On");
-        all_btn.set_valign(Align::Center);
-        all_btn.add_css_class("suggested-action");
+        let toggle_all_btn = gtk4::Button::with_label("All On");
+        toggle_all_btn.set_valign(Align::Center);
+        toggle_all_btn.add_css_class("suggested-action");
 
-        let none_btn = gtk4::Button::with_label("All Off");
-        none_btn.set_valign(Align::Center);
-        none_btn.add_css_class("destructive-action");
-
-        action_row.add_suffix(&none_btn);
-        action_row.add_suffix(&all_btn);
+        action_row.add_suffix(&toggle_all_btn);
         action_group.add(&action_row);
         
-        // all on
         {
             let proxy = Arc::clone(&proxy);
             let rt2 = rt.clone();
             let sink_rows = Arc::clone(&sink_rows);
             let handler_ids = Arc::clone(&handler_ids);
-            all_btn.connect_clicked(move |_| {
+            let all_on = {
                 let rows = sink_rows.lock().unwrap();
-                let ids = handler_ids.lock().unwrap();
-                for (name, toggle, _) in rows.iter() {
-                    if let Some((_, id)) = ids.iter().find(|(n, _)| n == name) {
-                        toggle.block_signal(id);
-                        toggle.set_active(true);
-                        toggle.unblock_signal(id);
-                    }
-                    let name = name.clone();
-                    let proxy2 = Arc::clone(&proxy);
-                    rt2.spawn(async move {
-                        if let Err(e) = proxy2.set_sink_enabled(&name, true).await {
-                            eprintln!("set_sink_enabled failed: {e}");
-                        }
-                    });
-                }
-            });
-        }
+                let any_enabled = rows.iter().any(|(_, toggle, _)| toggle.is_active());
+                Arc::new(Mutex::new(any_enabled))
+            };
+            if *all_on.lock().unwrap() {
+                toggle_all_btn.set_label("All Off");
+                toggle_all_btn.remove_css_class("suggested-action");
+                toggle_all_btn.add_css_class("destructive-action");
+            }
 
-        // all off
-        {
-            let proxy = Arc::clone(&proxy);
-            let rt2 = rt.clone();
-            let sink_rows = Arc::clone(&sink_rows);
-            let handler_ids = Arc::clone(&handler_ids);
-            none_btn.connect_clicked(move |_| {
+            toggle_all_btn.connect_clicked(move |btn| {
+                let mut state = all_on.lock().unwrap();
+                *state = !*state;
+                let enable = *state;
+
+                if enable {
+                    btn.set_label("All Off");
+                    btn.remove_css_class("suggested-action");
+                    btn.add_css_class("destructive-action");
+                } else {
+                    btn.set_label("All On");
+                    btn.remove_css_class("destructive-action");
+                    btn.add_css_class("suggested-action");
+                }
+
                 let rows = sink_rows.lock().unwrap();
                 let ids = handler_ids.lock().unwrap();
                 for (name, toggle, _) in rows.iter() {
                     if let Some((_, id)) = ids.iter().find(|(n, _)| n == name) {
                         toggle.block_signal(id);
-                        toggle.set_active(false);
+                        toggle.set_active(enable);
                         toggle.unblock_signal(id);
                     }
                     let name = name.clone();
                     let proxy2 = Arc::clone(&proxy);
                     rt2.spawn(async move {
-                        if let Err(e) = proxy2.set_sink_enabled(&name, false).await {
+                        if let Err(e) = proxy2.set_sink_enabled(&name, enable).await {
                             eprintln!("set_sink_enabled failed: {e}");
                         }
                     });

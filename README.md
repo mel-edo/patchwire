@@ -11,6 +11,8 @@ Play through your headphones and speakers at the same time. Patchwire watches th
 
 ---
 
+<img width="913" height="618" alt="Image" src="https://github.com/user-attachments/assets/b1a00eb8-07a2-45c8-a159-ea8fd8189113" />
+
 ## Overview
 
 Every time you connect a Bluetooth device or want to route audio to multiple outputs, you'd normally have to manually wire ports in Helvum or qpwgraph. Patchwire does this automatically.

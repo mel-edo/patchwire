@@ -1,0 +1,52 @@
+name: Update AUR
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-aur:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+
+      - name: Download release tarball and get sha256
+        run: |
+          URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/patchwire-v${VERSION}-x86_64-linux.tar.gz"
+          wget -q "$URL" -O patchwire-bin.tar.gz
+          echo "BIN_SHA256=$(sha256sum patchwire-bin.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+
+      - name: Get source tarball sha256
+        run: |
+          URL="https://github.com/${{ github.repository }}/archive/refs/tags/v${VERSION}.tar.gz"
+          wget -q "$URL" -O source.tar.gz
+          echo "SRC_SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+
+      - name: Publish patchwire-bin to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3
+        with:
+          pkgname: patchwire-bin
+          pkgbuild: ./packaging/patchwire-bin/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to v${{ env.VERSION }}"
+        env:
+          VERSION: ${{ env.VERSION }}
+          BIN_SHA256: ${{ env.BIN_SHA256 }}
+
+      - name: Publish patchwire to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3
+        with:
+          pkgname: patchwire
+          pkgbuild: ./packaging/patchwire/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to v${{ env.VERSION }}"
+        env:
+          VERSION: ${{ env.VERSION }}
+          SRC_SHA256: ${{ env.SRC_SHA256 }}

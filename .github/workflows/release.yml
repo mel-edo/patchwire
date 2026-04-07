@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libpipewire-0.3-dev libgtk-4-dev libadwaita-1-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package release tarball
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          mkdir -p dist
+          cp target/release/patchwire dist/
+          cp target/release/patchwire-gtk dist/
+          cp data/patchwire.service dist/
+          cp data/patchwire.desktop dist/
+          cp LICENSE dist/
+          tar -czf patchwire-${VERSION}-x86_64-linux.tar.gz -C dist .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: patchwire-*-x86_64-linux.tar.gz
+          generate_release_notes: true
