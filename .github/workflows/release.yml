@@ -63,6 +63,13 @@ jobs:
           wget -q "$URL" -O source.tar.gz
           echo "SRC_SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
 
+      - name: Substitute variables in PKGBUILDs
+        run: |
+          sed -i "s/\${VERSION}/${VERSION}/g" packaging/patchwire-bin/PKGBUILD
+          sed -i "s/\${BIN_SHA256}/${BIN_SHA256}/g" packaging/patchwire-bin/PKGBUILD
+          sed -i "s/\${VERSION}/${VERSION}/g" packaging/patchwire/PKGBUILD
+          sed -i "s/\${SRC_SHA256}/${SRC_SHA256}/g" packaging/patchwire/PKGBUILD
+
       - name: Publish patchwire-bin to AUR
         uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
         with:
